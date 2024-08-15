@@ -1,0 +1,15 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [Unreleased]
+
+
+## [0.0.1] - 2024-08-15
+
+### Added
+
+- Healh check to websites in cronjob style
+- Send message to Telegram Bot
+
+[0.0.1]: https://github.com/oktak/healthcheck/releases/tag/v0.0.1
