@@ -1,6 +1,8 @@
 use axum::{
+    extract::State,
     routing::{get},
     Router,
+    response::Json,
     response::IntoResponse,
 };
 use cron::Schedule;
@@ -18,7 +20,7 @@ use std::thread;
 use chrono;
 use chrono::Utc;
 use futures::future::join_all;
-use serde_json::json;
+use serde_json::{Value, json};
 
 type SharedState = Arc<Mutex<HashMap<String, (bool, String)>>>;
 
@@ -37,7 +39,10 @@ async fn main() {
 
     // Build the Axum router
     let app = Router::new()
-        .route("/healthcheck", get(move || health_check(state.clone())));
+        .route("/", get(get_root))
+        .route("/checknow", get(check_now))
+        .route("/healthcheck", get(health_check))
+        .with_state(state);
 
     // Start the server
     axum::Server::bind(&"0.0.0.0:10000".parse().unwrap())
@@ -46,7 +51,56 @@ async fn main() {
         .unwrap();
 }
 
-async fn health_check(state: SharedState) -> impl IntoResponse {
+async fn get_root() -> Json<Value> {
+    Json(json!({ "data": "hello." }))
+}
+
+async fn check_now(State(state): State<SharedState>) -> impl IntoResponse {
+    let api_tg_bot = env::var("API_TG_BOT").expect("$API_TG_BOT is not set");
+    let chat_id = env::var("CHAT_ID").expect("$CHAT_ID is not set");
+    let secret_file = env::var("SECRET_FILE").expect("$SECRET_FILE is not set");
+
+    let client = Client::new();
+    let sites = read_websites_from_file(&secret_file);
+
+    let futures = sites.into_iter()
+        .enumerate()
+        .map(|(i, site)| {
+        let state = state.clone();
+        let client = client.clone();
+        async move {
+            let status = check_website(&client, &site).await;
+            let time = Utc::now().to_rfc3339();
+            let mut state = state.lock().unwrap();
+            state.insert(site.clone(), (status, Utc::now().to_rfc3339()));
+            format!("{}: {} at {}", i, if status { "OK" } else { "DOWN" }, time)
+        }
+    });
+
+    let results: Vec<String> = join_all(futures).await;
+
+
+    // Prepare the payload
+    let payload = {
+        results.join("\n")
+    };
+
+    // Send the POST request
+    if payload.clone().contains("DOWN") {
+        let _response = Client::new().post(api_tg_bot.clone())
+            .json(&json!({
+                "method": "sendMessage",
+                "chat_id": chat_id.clone(),
+                "text": "healthcheck\n".to_owned() + &(payload.clone())
+            }))
+            .send()
+            .await;
+    }
+
+    payload.clone()
+}
+
+async fn health_check(State(state): State<SharedState>) -> impl IntoResponse {
     let state = state.lock().unwrap();
 
     // Log the length of the state
@@ -60,17 +114,18 @@ async fn health_check(state: SharedState) -> impl IntoResponse {
 }
 
 async fn run_cron_job(state: SharedState) {
-    // Define the cron schedule
-    // let expression = "0/5 * * * * *"; // every Five seconds
-    let expression = "12 2/5 * * * *"; // every Five minutes since at HH:02, on second: 12
-    // let expression = "12 * * * * *"; // every minute on second: 12
-    let schedule = Schedule::from_str(expression).expect("Failed to parse CRON expression");
-
-    let client = Client::new();
-
+    let expression = env::var("CRON_EXPRESSION").expect("$CRON_EXPRESSION is not set");
     let api_tg_bot = env::var("API_TG_BOT").expect("$API_TG_BOT is not set");
     let chat_id = env::var("CHAT_ID").expect("$CHAT_ID is not set");
     let secret_file = env::var("SECRET_FILE").expect("$SECRET_FILE is not set");
+
+    // Define the cron schedule
+    // let expression = "0/5 * * * * *"; // every Five seconds
+    // let expression = "12 2/5 * * * *"; // every Five minutes since at HH:02, on second: 12
+    // let expression = "12 * * * * *"; // every minute on second: 12
+    let schedule = Schedule::from_str(&expression).expect("Failed to parse CRON expression");
+
+    let client = Client::new();
 
     for datetime in schedule.upcoming(chrono::Utc) {
         let now = chrono::Utc::now();
@@ -122,14 +177,16 @@ async fn run_cron_job(state: SharedState) {
         };
 
         // Send the POST request
-        let _response = Client::new().post(api_tg_bot.clone())
-            .json(&json!({
-                "method": "sendMessage",
-                "chat_id": chat_id.clone(),
-                "text": "healthcheck\n".to_owned() + &payload
-            }))
-            .send()
-            .await;
+        if payload.clone().contains("DOWN") {
+            let _response = Client::new().post(api_tg_bot.clone())
+                .json(&json!({
+                    "method": "sendMessage",
+                    "chat_id": chat_id.clone(),
+                    "text": "healthcheck\n".to_owned() + &payload
+                }))
+                .send()
+                .await;
+        }
 
         // Handle the response if needed
     }
@@ -145,6 +202,7 @@ fn read_websites_from_file(filename: &str) -> Vec<String> {
 
 async fn check_website(client: &Client, url: &str) -> bool {
     client.get(url)
+        .timeout(Duration::from_secs(60 * 1))
         .send()
         .await
         .map(|res| res.status().is_success())

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 
+## [0.0.2] - 2024-08-21
+
+### Added
+
+- use ENVIRONMENT VARIABLE to set cron
+- consider timeout as DOWN status
+- send message to tg bot when some websites is DOWN
+- add / with content as the self healthcheck endpoint
+- add /checknow as the check it now endpoint
+
+
 ## [0.0.1] - 2024-08-15
 
 ### Added
@@ -12,4 +23,5 @@ All notable changes to this project will be documented in this file.
 - Healh check to websites in cronjob style
 - Send message to Telegram Bot
 
+[0.0.2]: https://github.com/oktak/healthcheck/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/oktak/healthcheck/releases/tag/v0.0.1
