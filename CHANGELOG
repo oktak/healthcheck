@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 
+## [0.0.3] - 2024-08-25
+
+- keep awake
+- root return string instead of JSON
+
 ## [0.0.2] - 2024-08-21
 
 ### Added
@@ -23,5 +28,6 @@ All notable changes to this project will be documented in this file.
 - Healh check to websites in cronjob style
 - Send message to Telegram Bot
 
+[0.0.3]: https://github.com/oktak/healthcheck/compare/v0.0.1...v0.0.3
 [0.0.2]: https://github.com/oktak/healthcheck/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/oktak/healthcheck/releases/tag/v0.0.1

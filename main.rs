@@ -2,25 +2,22 @@ use axum::{
     extract::State,
     routing::{get},
     Router,
-    response::Json,
     response::IntoResponse,
 };
 use cron::Schedule;
 use reqwest::Client;
 use std::{fs, str::FromStr, time::Duration};
 use tokio::task;
-// use tokio::time::sleep;
 
 use std::env;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use std::thread;
 use chrono;
 use chrono::Utc;
 use futures::future::join_all;
-use serde_json::{Value, json};
+use serde_json::{json};
 
 type SharedState = Arc<Mutex<HashMap<String, (bool, String)>>>;
 
@@ -31,6 +28,11 @@ async fn main() {
 
     // Clone state for use in the cron job
     let state_for_cron = state.clone();
+
+    // Keep render awake
+    task::spawn(async move {
+        run_awake().await;
+    });
 
     // Start the cron job
     task::spawn(async move {
@@ -45,14 +47,19 @@ async fn main() {
         .with_state(state);
 
     // Start the server
+    println!("Running on http://0.0.0.0:10000");
     axum::Server::bind(&"0.0.0.0:10000".parse().unwrap())
         .serve(app.into_make_service())
         .await
         .unwrap();
 }
 
-async fn get_root() -> Json<Value> {
-    Json(json!({ "data": "hello." }))
+// async fn get_root() -> Json<Value> {
+//     Json(json!({ "data": "hello." }))
+// }
+
+async fn get_root() -> impl IntoResponse {
+    String::from("Hello, world!").into_response()
 }
 
 async fn check_now(State(state): State<SharedState>) -> impl IntoResponse {
@@ -133,9 +140,10 @@ async fn run_cron_job(state: SharedState) {
         // let duration = (datetime - now).to_std().unwrap_or(Duration::from_secs(0));
         // sleep(duration).await;
         let until = datetime - now;
-        thread::sleep(until.to_std().unwrap());
+        // ref: https://ryhl.io/blog/async-what-is-blocking/
+        tokio::time::sleep(until.to_std().unwrap_or(Duration::from_secs(0))).await;
 
-        println!("Checking...");
+        println!("Checking...{}", now.format("%Y-%m-%d %H:%M:%S"));
 
         // Read the website list from a file
         let sites = read_websites_from_file(&secret_file);
@@ -187,6 +195,41 @@ async fn run_cron_job(state: SharedState) {
                 .send()
                 .await;
         }
+
+        // Handle the response if needed
+    }
+}
+
+async fn run_awake() {
+    let self_host = env::var("SELF_HOST").expect("$SELF_HOST is not set");
+
+    // Define the cron schedule
+    let expression = "24 * * * * *"; // every Five minutes since at HH:02, on second: 12
+    let schedule = Schedule::from_str(&expression).expect("Failed to parse CRON expression");
+
+    let client = Client::new();
+
+    for datetime in schedule.upcoming(chrono::Utc) {
+        let now = chrono::Utc::now();
+
+        // let duration = (datetime - now).to_std().unwrap_or(Duration::from_secs(0));
+        // sleep(duration).await;
+        let until = datetime - now;
+        // ref: https://ryhl.io/blog/async-what-is-blocking/
+        tokio::time::sleep(until.to_std().unwrap_or(Duration::from_secs(0))).await;
+
+        println!("Awake...{}", now.format("%Y-%m-%d %H:%M:%S"));
+
+        let sites: Vec<String> = vec![self_host.clone()];
+
+        let futures = sites.into_iter().map(|site| {
+            let client = client.clone();
+            async move {
+                check_website(&client, &site).await;
+            }
+        });
+
+        join_all(futures).await;
 
         // Handle the response if needed
     }
